@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PaneHeader } from "./PaneHeader";
 
 type EditorPaneProps = {
   value: string;
@@ -71,6 +72,17 @@ async function loadCodeMirrorSupport(): Promise<CodeMirrorSupport | null> {
   }
 
   return codeMirrorSupportPromise;
+}
+
+function EditorIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 19.5V4.5A1.5 1.5 0 0 1 5.5 3h13A1.5 1.5 0 0 1 20 4.5v15" />
+      <path d="M8 7h8" />
+      <path d="M8 11h8" />
+      <path d="M8 15h5" />
+    </svg>
+  );
 }
 
 export function EditorPane(props: EditorPaneProps) {
@@ -180,7 +192,7 @@ export function EditorPane(props: EditorPaneProps) {
 
   return (
     <section className="pane pane--editor">
-      <div className="pane__header">Markdown</div>
+      <PaneHeader title="Markdown" meta="本地纯文本编辑" badge={isCodeMirrorReady ? "CodeMirror" : "Textarea"} icon={<EditorIcon />} />
       <div className="editor-surface">
         {isCodeMirrorReady ? (
           <div ref={hostRef} className="editor-host" />

@@ -65,11 +65,29 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
+          BUILD_TARGET: ${{ matrix.target }}
         run: |
           shopt -s nullglob
-          assets=(release/*)
+
+          case "$BUILD_TARGET" in
+            mac)
+              assets=(release/*.dmg release/*.zip)
+              ;;
+            win)
+              assets=(release/*.exe)
+              ;;
+            linux)
+              assets=(release/*.AppImage release/*.deb release/*.tar.gz)
+              ;;
+            *)
+              echo "Unsupported build target: $BUILD_TARGET"
+              exit 1
+              ;;
+          esac
+
           if [ ${#assets[@]} -eq 0 ]; then
-            echo "No release artifacts found in release/"
+            echo "No release artifacts found for target: $BUILD_TARGET"
             exit 1
           fi
+
           gh release upload "$TAG_NAME" "${assets[@]}" --repo "$GH_REPO" --clobber

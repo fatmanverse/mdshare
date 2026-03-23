@@ -2,17 +2,38 @@ import { app } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-type DraftPayload = {
+export type ThemePreference = "light" | "dark" | "system";
+
+export type DraftPayload = {
   content: string;
   filePath: string | null;
+};
+
+export type AppSettings = {
+  theme: ThemePreference;
+  reopenLastFile: boolean;
 };
 
 type LocalStore = {
   recentFiles: string[];
   draft: DraftPayload | null;
+  settings: AppSettings;
+  lastOpenedFilePath: string | null;
 };
 
 const storePath = path.join(app.getPath("userData"), "mdshare-store.json");
+
+const defaultSettings: AppSettings = {
+  theme: "system",
+  reopenLastFile: false,
+};
+
+function normalizeSettings(value: Partial<AppSettings> | null | undefined): AppSettings {
+  return {
+    theme: value?.theme === "light" || value?.theme === "dark" || value?.theme === "system" ? value.theme : defaultSettings.theme,
+    reopenLastFile: typeof value?.reopenLastFile === "boolean" ? value.reopenLastFile : defaultSettings.reopenLastFile,
+  };
+}
 
 async function readStore(): Promise<LocalStore> {
   try {
@@ -22,11 +43,15 @@ async function readStore(): Promise<LocalStore> {
     return {
       recentFiles: Array.isArray(parsed.recentFiles) ? parsed.recentFiles : [],
       draft: parsed.draft ?? null,
+      settings: normalizeSettings(parsed.settings),
+      lastOpenedFilePath: typeof parsed.lastOpenedFilePath === "string" ? parsed.lastOpenedFilePath : null,
     };
   } catch {
     return {
       recentFiles: [],
       draft: null,
+      settings: defaultSettings,
+      lastOpenedFilePath: null,
     };
   }
 }
@@ -57,3 +82,24 @@ export async function readRecoveryDraft() {
   return store.draft;
 }
 
+export async function getAppSettings() {
+  const store = await readStore();
+  return store.settings;
+}
+
+export async function updateAppSettings(payload: Partial<AppSettings>) {
+  const store = await readStore();
+  const settings = normalizeSettings({ ...store.settings, ...payload });
+  await writeStore({ ...store, settings });
+  return settings;
+}
+
+export async function getLastOpenedFilePath() {
+  const store = await readStore();
+  return store.lastOpenedFilePath;
+}
+
+export async function saveLastOpenedFilePath(filePath: string | null) {
+  const store = await readStore();
+  await writeStore({ ...store, lastOpenedFilePath: filePath });
+}

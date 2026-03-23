@@ -11,6 +11,13 @@ import { renderMarkdown } from "../lib/markdown/parser";
 import { buildExportHtml } from "../lib/markdown/template";
 import { useDocumentStore } from "./store/document-store";
 
+type ThemePreference = "light" | "dark" | "system";
+
+type AppSettings = {
+  theme: ThemePreference;
+  reopenLastFile: boolean;
+};
+
 type OpenedFile = {
   filePath: string;
   title: string;
@@ -22,6 +29,11 @@ type DragFile = File & {
 };
 
 const MARKDOWN_FILE_PATTERN = /\.(md|markdown)$/i;
+const defaultSettings: AppSettings = {
+  theme: "system",
+  reopenLastFile: false,
+};
+const DEFAULT_MESSAGE = "准备就绪";
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -49,23 +61,35 @@ function hasFileTransfer(dataTransfer: DataTransfer) {
   return Array.from(dataTransfer.types).includes("Files");
 }
 
+function getSystemThemePreference() {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function resolveTheme(theme: ThemePreference, systemTheme: "light" | "dark") {
+  return theme === "system" ? systemTheme : theme;
+}
+
 export function App() {
-  const [message, setMessage] = useState("准备就绪");
+  const [message, setMessage] = useState(DEFAULT_MESSAGE);
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [isDragActive, setIsDragActive] = useState(false);
+  const [activeTocId, setActiveTocId] = useState<string | null>(null);
+  const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [systemTheme, setSystemTheme] = useState<"light" | "dark">(() => getSystemThemePreference());
+  const [isInitialized, setIsInitialized] = useState(false);
   const dragDepthRef = useRef(0);
+  const previewRef = useRef<HTMLDivElement | null>(null);
 
   const filePath = useDocumentStore((state) => state.filePath);
   const title = useDocumentStore((state) => state.title);
   const content = useDocumentStore((state) => state.content);
   const isDirty = useDocumentStore((state) => state.isDirty);
-  const theme = useDocumentStore((state) => state.theme);
   const lastSavedAt = useDocumentStore((state) => state.lastSavedAt);
   const lastAutosavedAt = useDocumentStore((state) => state.lastAutosavedAt);
   const setDocument = useDocumentStore((state) => state.setDocument);
   const setContent = useDocumentStore((state) => state.setContent);
-  const setTheme = useDocumentStore((state) => state.setTheme);
 
+  const resolvedTheme = useMemo(() => resolveTheme(settings.theme, systemTheme), [settings.theme, systemTheme]);
   const rendered = useMemo(() => renderMarkdown(content), [content]);
   const previewHtml = useMemo(() => preparePreviewHtml(rendered.html, filePath), [filePath, rendered.html]);
   const exportHtml = useMemo(
@@ -74,9 +98,9 @@ export function App() {
         title,
         html: previewHtml,
         toc: rendered.toc,
-        theme,
+        theme: resolvedTheme,
       }),
-    [previewHtml, rendered.toc, theme, title],
+    [previewHtml, rendered.toc, resolvedTheme, title],
   );
 
   const words = content.trim() ? content.trim().split(/\s+/).length : 0;
@@ -112,6 +136,36 @@ export function App() {
     [isDirty],
   );
 
+  const persistSettings = useCallback(async (payload: Partial<AppSettings>) => {
+    const nextSettings = await window.electronApi.updateAppSettings(payload);
+    setSettings(nextSettings);
+    return nextSettings;
+  }, []);
+
+  const handleThemePreferenceChange = useCallback(
+    async (nextTheme: ThemePreference) => {
+      try {
+        await persistSettings({ theme: nextTheme });
+        setMessage(nextTheme === "system" ? "主题已设置为跟随系统" : `主题已切换为${nextTheme === "light" ? "浅色" : "深色"}`);
+      } catch (error) {
+        setMessage(`主题设置失败：${getErrorMessage(error)}`);
+      }
+    },
+    [persistSettings],
+  );
+
+  const handleToggleReopenLastFile = useCallback(
+    async (enabled: boolean) => {
+      try {
+        await persistSettings({ reopenLastFile: enabled });
+        setMessage(enabled ? "已开启启动恢复上次文件" : "已关闭启动恢复上次文件");
+      } catch (error) {
+        setMessage(`启动设置失败：${getErrorMessage(error)}`);
+      }
+    },
+    [persistSettings],
+  );
+
   const handleNew = useCallback(() => {
     if (!confirmDiscardChanges("新建文档")) {
       return;
@@ -132,12 +186,13 @@ export function App() {
     async (targetFilePath: string, successMessagePrefix = "已打开") => {
       const file = await window.electronApi.openFileByPath(targetFilePath);
       if (!file) {
-        return;
+        return false;
       }
 
       applyOpenedFile(file);
       await refreshRecentFiles();
       setMessage(`${successMessagePrefix} ${file.title}`);
+      return true;
     },
     [applyOpenedFile, refreshRecentFiles],
   );
@@ -297,6 +352,24 @@ export function App() {
   }, [rendered.html, rendered.toc, setDocument]);
 
   useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => setSystemTheme(media.matches ? "dark" : "light");
+
+    update();
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", update);
+      return () => media.removeEventListener("change", update);
+    }
+
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
+
+  useEffect(() => {
+    if (!isInitialized) {
+      return;
+    }
+
     const timer = window.setTimeout(async () => {
       try {
         await window.electronApi.saveRecoveryDraft({
@@ -310,17 +383,49 @@ export function App() {
     }, 800);
 
     return () => window.clearTimeout(timer);
-  }, [content, filePath, setDocument]);
+  }, [content, filePath, isInitialized, setDocument]);
 
   useEffect(() => {
+    let cancelled = false;
+
     void (async () => {
       try {
-        const [draft, files] = await Promise.all([
+        const [draft, files, nextSettings, lastOpenedFilePath] = await Promise.all([
           window.electronApi.readRecoveryDraft(),
           window.electronApi.getRecentFiles(),
+          window.electronApi.getAppSettings(),
+          window.electronApi.getLastOpenedFilePath(),
         ]);
 
+        if (cancelled) {
+          return;
+        }
+
         setRecentFiles(files);
+        setSettings(nextSettings);
+
+        if (nextSettings.reopenLastFile && lastOpenedFilePath) {
+          if (draft?.content && draft.filePath && draft.filePath === lastOpenedFilePath) {
+            setDocument({
+              content: draft.content,
+              filePath: draft.filePath,
+              title: buildRecoveredTitle(draft.filePath),
+              isDirty: true,
+              lastSavedAt: null,
+            });
+            setMessage("已恢复上次编辑内容");
+            return;
+          }
+
+          try {
+            const opened = await openFileByPath(lastOpenedFilePath, "已恢复上次文件");
+            if (opened || cancelled) {
+              return;
+            }
+          } catch {
+            // ignore and fall back to draft recovery
+          }
+        }
 
         if (draft?.content) {
           setDocument({
@@ -333,14 +438,36 @@ export function App() {
           setMessage("已恢复上次草稿");
         }
       } catch (error) {
-        setMessage(`初始化失败：${getErrorMessage(error)}`);
+        if (!cancelled) {
+          setMessage(`初始化失败：${getErrorMessage(error)}`);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsInitialized(true);
+        }
       }
     })();
-  }, [setDocument]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [openFileByPath, setDocument]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
+    document.documentElement.dataset.theme = resolvedTheme;
+  }, [resolvedTheme]);
+
+  useEffect(() => {
+    if (message === DEFAULT_MESSAGE) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setMessage(DEFAULT_MESSAGE);
+    }, 2400);
+
+    return () => window.clearTimeout(timer);
+  }, [message]);
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -387,6 +514,62 @@ export function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleNew, handleOpen, handleSave]);
 
+  const handleSelectTocItem = useCallback((id: string) => {
+    const container = previewRef.current;
+    if (!container) {
+      return;
+    }
+
+    const heading = container.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
+    if (!heading) {
+      return;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const headingRect = heading.getBoundingClientRect();
+    const nextTop = container.scrollTop + (headingRect.top - containerRect.top) - 24;
+
+    container.scrollTo({
+      top: Math.max(0, nextTop),
+      behavior: "smooth",
+    });
+    setActiveTocId(id);
+  }, []);
+
+  useEffect(() => {
+    return window.electronApi.onMenuAction((action) => {
+      switch (action.type) {
+        case "file:new":
+          handleNew();
+          break;
+        case "file:open":
+          void handleOpen();
+          break;
+        case "file:save":
+          void handleSave(false);
+          break;
+        case "file:save-as":
+          void handleSave(true);
+          break;
+        case "file:export-html":
+          void handleExport("html");
+          break;
+        case "file:export-pdf":
+          void handleExport("pdf");
+          break;
+        case "file:open-recent":
+          void handleOpenRecent(action.filePath);
+          break;
+        case "settings:set-theme":
+          void handleThemePreferenceChange(action.theme);
+          break;
+        case "settings:set-reopen-last-file":
+          void handleToggleReopenLastFile(action.enabled);
+          break;
+      }
+    });
+  }, [handleExport, handleNew, handleOpen, handleOpenRecent, handleSave, handleThemePreferenceChange, handleToggleReopenLastFile]);
+
   return (
     <div
       className="app-shell"
@@ -396,24 +579,31 @@ export function App() {
       onDrop={handleDrop}
     >
       <Toolbar
+        currentFilePath={filePath}
+        recentFiles={recentFiles}
+        reopenLastFile={settings.reopenLastFile}
+        theme={resolvedTheme}
+        themePreference={settings.theme}
         title={title}
-        theme={theme}
         onNew={handleNew}
         onOpen={handleOpen}
+        onOpenRecentFile={(targetFilePath) => void handleOpenRecent(targetFilePath)}
         onSave={() => void handleSave(false)}
         onSaveAs={() => void handleSave(true)}
         onExportHtml={() => void handleExport("html")}
         onExportPdf={() => void handleExport("pdf")}
-        onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")}
+        onThemePreferenceChange={(nextTheme) => void handleThemePreferenceChange(nextTheme)}
+        onToggleReopenLastFile={(enabled) => void handleToggleReopenLastFile(enabled)}
+        onToggleTheme={() => void handleThemePreferenceChange(resolvedTheme === "light" ? "dark" : "light")}
       />
 
       <main className="workspace">
         <div className="workspace__content">
-          <EditorPane value={content} theme={theme} onChange={setContent} />
-          <PreviewPane html={previewHtml} />
+          <EditorPane value={content} theme={resolvedTheme} onChange={setContent} />
+          <PreviewPane html={previewHtml} containerRef={previewRef} onActiveHeadingChange={setActiveTocId} onNotify={setMessage} />
         </div>
         <div className="sidebar">
-          <TocPanel toc={rendered.toc} />
+          <TocPanel toc={rendered.toc} activeId={activeTocId} onSelect={handleSelectTocItem} />
           <RecentFilesPanel currentFilePath={filePath} files={recentFiles} onOpenFile={handleOpenRecent} />
         </div>
       </main>
@@ -426,7 +616,7 @@ export function App() {
         lines={lines}
       />
 
-      <div className="toast">{message}</div>
+      {message !== DEFAULT_MESSAGE ? <div className="toast">{message}</div> : null}
       {isDragActive ? <div className="drop-overlay">拖拽 Markdown 文件到这里打开</div> : null}
     </div>
   );

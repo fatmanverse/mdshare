@@ -1,7 +1,17 @@
 import { dialog, ipcMain } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { addRecentFile, getRecentFiles, readRecoveryDraft, saveRecoveryDraft } from "../services/recent-files.js";
+import {
+  addRecentFile,
+  getAppSettings,
+  getLastOpenedFilePath,
+  getRecentFiles,
+  readRecoveryDraft,
+  saveLastOpenedFilePath,
+  saveRecoveryDraft,
+  updateAppSettings,
+} from "../services/recent-files.js";
+import { rebuildApplicationMenu } from "../menu.js";
 
 type SavePayload = {
   filePath: string | null;
@@ -13,6 +23,11 @@ type OpenFileResult = {
   filePath: string;
   title: string;
   content: string;
+};
+
+type SettingsPayload = {
+  theme?: "light" | "dark" | "system";
+  reopenLastFile?: boolean;
 };
 
 const MARKDOWN_FILE_PATTERN = /\.(md|markdown)$/i;
@@ -36,6 +51,8 @@ async function readMarkdownFile(filePath: string): Promise<OpenFileResult> {
 
   const content = await fs.readFile(filePath, "utf-8");
   await addRecentFile(filePath);
+  await saveLastOpenedFilePath(filePath);
+  await rebuildApplicationMenu();
 
   return {
     filePath,
@@ -82,6 +99,8 @@ export function registerFileIpc() {
 
     await fs.writeFile(payload.filePath, payload.content, "utf-8");
     await addRecentFile(payload.filePath);
+    await saveLastOpenedFilePath(payload.filePath);
+    await rebuildApplicationMenu();
 
     return {
       filePath: payload.filePath,
@@ -102,6 +121,8 @@ export function registerFileIpc() {
 
     await fs.writeFile(result.filePath, payload.content, "utf-8");
     await addRecentFile(result.filePath);
+    await saveLastOpenedFilePath(result.filePath);
+    await rebuildApplicationMenu();
 
     return {
       filePath: result.filePath,
@@ -110,9 +131,16 @@ export function registerFileIpc() {
   });
 
   ipcMain.handle("file:get-recent", async () => getRecentFiles());
+  ipcMain.handle("file:get-last-opened", async () => getLastOpenedFilePath());
   ipcMain.handle("file:read-draft", async () => readRecoveryDraft());
   ipcMain.handle("file:save-draft", async (_event, payload: { content: string; filePath: string | null }) => {
     await saveRecoveryDraft(payload);
     return { ok: true };
+  });
+  ipcMain.handle("settings:get", async () => getAppSettings());
+  ipcMain.handle("settings:update", async (_event, payload: SettingsPayload) => {
+    const nextSettings = await updateAppSettings(payload);
+    await rebuildApplicationMenu();
+    return nextSettings;
   });
 }

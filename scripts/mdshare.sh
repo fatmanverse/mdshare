@@ -73,6 +73,13 @@ ensure_dependencies() {
   fi
 }
 
+ensure_icon_assets() {
+  if [ -x "./scripts/build-icons.sh" ]; then
+    log "Refreshing icon assets"
+    ./scripts/build-icons.sh
+  fi
+}
+
 run_npm_script() {
   local script_name="$1"
   log "Running npm script: ${script_name}"
@@ -137,10 +144,12 @@ case "$COMMAND" in
     ;;
   build)
     ensure_dependencies
+    ensure_icon_assets
     run_npm_script "build"
     ;;
   package)
     ensure_dependencies
+    ensure_icon_assets
     if [ "$TARGET" = "all" ]; then
       run_package_all
     else

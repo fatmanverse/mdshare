@@ -1,0 +1,38 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="160" y1="120" x2="864" y2="904" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="sheet" x1="308" y1="210" x2="744" y2="786" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DBEAFE"/>
+    </linearGradient>
+    <filter id="shadow" x="183" y="127" width="658" height="770" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="24"/>
+      <feGaussianBlur stdDeviation="30"/>
+      <feComposite in2="hardAlpha" operator="out"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.0588235 0 0 0 0 0.0941176 0 0 0 0 0.235294 0 0 0 0.28 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_2"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_2" result="shape"/>
+    </filter>
+  </defs>
+  <rect x="96" y="96" width="832" height="832" rx="220" fill="url(#bg)"/>
+  <circle cx="768" cy="256" r="128" fill="#60A5FA" fill-opacity="0.16"/>
+  <circle cx="248" cy="792" r="152" fill="#FFFFFF" fill-opacity="0.08"/>
+  <g filter="url(#shadow)">
+    <path d="M304 208C304 185.909 321.909 168 344 168H593.431C604.039 168 614.213 172.214 621.716 179.716L717.284 275.284C724.786 282.787 729 292.961 729 303.569V760C729 782.091 711.091 800 689 800H344C321.909 800 304 782.091 304 760V208Z" fill="url(#sheet)"/>
+    <path d="M593 168V267C593 289.091 610.909 307 633 307H729" fill="#BFDBFE"/>
+    <path d="M593 168V267C593 289.091 610.909 307 633 307H729" stroke="#93C5FD" stroke-width="22" stroke-linejoin="round"/>
+    <path d="M410 410L354 466L410 522" stroke="#2563EB" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M620 410L676 466L620 522" stroke="#2563EB" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M556 380L506 552" stroke="#0F172A" stroke-width="30" stroke-linecap="round"/>
+    <rect x="382" y="620" width="268" height="34" rx="17" fill="#93C5FD"/>
+    <rect x="382" y="682" width="190" height="34" rx="17" fill="#BFDBFE"/>
+  </g>
+  <path d="M726 650V560" stroke="#F8FAFC" stroke-width="34" stroke-linecap="round"/>
+  <path d="M726 560L674 612" stroke="#F8FAFC" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M726 560L778 612" stroke="#F8FAFC" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

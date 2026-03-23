@@ -13,7 +13,7 @@ const md = new MarkdownIt({
   typographer: true,
   highlight(code: string, language: string) {
     if (language && hljs.getLanguage(language)) {
-      return `<pre class="hljs"><code>${hljs.highlight(code, { language }).value}</code></pre>`;
+      return `<pre class="hljs"><code class="language-${language}">${hljs.highlight(code, { language }).value}</code></pre>`;
     }
 
     return `<pre class="hljs"><code>${md.utils.escapeHtml(code)}</code></pre>`;
@@ -29,30 +29,51 @@ function slugify(input: string) {
     .replace(/-+/g, "-");
 }
 
-export function buildToc(markdown: string): TocItem[] {
-  return markdown
-    .split("\n")
-    .map((line) => /^(#{1,6})\s+(.+)$/.exec(line))
-    .filter((item): item is RegExpExecArray => Boolean(item))
-    .map((match) => ({
-      level: match[1].length,
-      text: match[2].trim(),
-      id: slugify(match[2]),
-    }));
+function collectHeadings(tokens: any[]): TocItem[] {
+  const toc: TocItem[] = [];
+  const slugCounts = new Map<string, number>();
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token.type !== "heading_open") {
+      continue;
+    }
+
+    const inlineToken = tokens[index + 1];
+    if (!inlineToken || inlineToken.type !== "inline") {
+      continue;
+    }
+
+    const level = Number.parseInt(token.tag.replace("h", ""), 10);
+    const text = extractInlineText(inlineToken).trim();
+    const baseSlug = slugify(text) || "section";
+    const duplicateCount = (slugCounts.get(baseSlug) ?? 0) + 1;
+    slugCounts.set(baseSlug, duplicateCount);
+    const id = duplicateCount === 1 ? baseSlug : `${baseSlug}-${duplicateCount}`;
+
+    token.attrSet("id", id);
+    toc.push({ id, text, level });
+  }
+
+  return toc;
+}
+
+function extractInlineText(inlineToken: any) {
+  if (!inlineToken.children || inlineToken.children.length === 0) {
+    return inlineToken.content ?? "";
+  }
+
+  return inlineToken.children.map((child: any) => child.content ?? "").join("");
+}
+
+export function buildToc(markdown: string) {
+  return collectHeadings(md.parse(markdown, {}));
 }
 
 export function renderMarkdown(markdown: string) {
-  const toc = buildToc(markdown);
-  const rawHtml = md.render(markdown);
-  const html = toc.reduce((output, item) => {
-    const pattern = new RegExp(`<h${item.level}>${escapeRegExp(item.text)}</h${item.level}>`);
-    return output.replace(pattern, `<h${item.level} id="${item.id}">${item.text}</h${item.level}>`);
-  }, rawHtml);
+  const tokens = md.parse(markdown, {});
+  const toc = collectHeadings(tokens);
+  const html = md.renderer.render(tokens, md.options, {});
 
   return { html, toc };
 }
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
