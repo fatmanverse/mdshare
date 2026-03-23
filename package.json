@@ -86,5 +86,6 @@
         "tar.gz"
       ]
     }
-  }
+  },
+  "license": "Apache-2.0"
 }

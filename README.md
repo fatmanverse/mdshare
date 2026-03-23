@@ -126,3 +126,7 @@ git push origin v0.1.0
 - 增强图片资源异常提示与未保存文档的图片预览策略
 - 增加导出主题和打印样式细节优化
 - 跑通 GitHub 仓库创建、首个 tag release 和分发包验证
+
+## License
+
+Apache-2.0
