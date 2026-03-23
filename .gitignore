@@ -8,3 +8,7 @@ test-results
 .idea/
 .DS_Store
 *.log
+
+mdshare-development-plan.md
+mdshare-prd.md
+mdshare-technical-design.md
