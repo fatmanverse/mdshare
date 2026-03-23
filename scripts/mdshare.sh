@@ -74,9 +74,9 @@ ensure_dependencies() {
 }
 
 ensure_icon_assets() {
-  if [ -x "./scripts/build-icons.sh" ]; then
+  if [ -f "./scripts/build-icons.mjs" ]; then
     log "Refreshing icon assets"
-    ./scripts/build-icons.sh
+    node ./scripts/build-icons.mjs
   fi
 }
 

@@ -23,7 +23,7 @@
     "dist:mac": "npm run build && electron-builder --publish never --mac dmg zip",
     "dist:win": "npm run build && electron-builder --publish never --win nsis portable",
     "dist:linux": "npm run build && electron-builder --publish never --linux AppImage deb tar.gz",
-    "build:icons": "./scripts/build-icons.sh"
+    "build:icons": "node ./scripts/build-icons.mjs"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.3.2",
