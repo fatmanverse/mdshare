@@ -5,6 +5,7 @@ type PaneHeaderProps = {
   meta: string;
   badge?: string;
   icon: ReactNode;
+  actions?: ReactNode;
 };
 
 export function PaneHeader(props: PaneHeaderProps) {
@@ -19,7 +20,10 @@ export function PaneHeader(props: PaneHeaderProps) {
           <span className="pane__header-meta">{props.meta}</span>
         </div>
       </div>
-      {props.badge ? <span className="pane__header-badge">{props.badge}</span> : null}
+      <div className="pane__header-side">
+        {props.actions ? <div className="pane__header-actions">{props.actions}</div> : null}
+        {props.badge ? <span className="pane__header-badge">{props.badge}</span> : null}
+      </div>
     </div>
   );
 }

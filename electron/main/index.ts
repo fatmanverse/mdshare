@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   clipboard,
   dialog,
+  ipcMain,
   Menu,
   nativeImage,
   shell,
@@ -13,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerFileIpc } from "./ipc/file.js";
 import { registerExportIpc } from "./ipc/export.js";
-import { rebuildApplicationMenu, setMenuWindow } from "./menu.js";
+import { buildMarkdownInsertSubmenu, rebuildApplicationMenu, setMenuWindow } from "./menu.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -92,7 +93,7 @@ async function resolveContextMenuDetails(window: BrowserWindow, params: ContextM
   }
 }
 
-function buildContextMenuTemplate(params: ContextMenuParams, details: ContextMenuDetails): MenuItemConstructorOptions[] {
+function buildContextMenuTemplate(window: BrowserWindow, params: ContextMenuParams, details: ContextMenuDetails): MenuItemConstructorOptions[] {
   const template: MenuItemConstructorOptions[] = [];
   const hasSelection = params.selectionText.trim().length > 0;
   const hasExternalLink = Boolean(params.linkURL && isExternalUrl(params.linkURL));
@@ -148,6 +149,13 @@ function buildContextMenuTemplate(params: ContextMenuParams, details: ContextMen
     }
 
     template.push(
+      {
+        label: "插入 Markdown",
+        submenu: buildMarkdownInsertSubmenu((action) => {
+          window.webContents.send("menu:action", action);
+        }),
+      },
+      { type: "separator" },
       { role: "undo", enabled: params.editFlags.canUndo },
       { role: "redo", enabled: params.editFlags.canRedo },
       { type: "separator" },
@@ -175,7 +183,7 @@ function attachContextMenu(window: BrowserWindow) {
   window.webContents.on("context-menu", (_event, params) => {
     void (async () => {
       const details = await resolveContextMenuDetails(window, params);
-      const template = buildContextMenuTemplate(params, details);
+      const template = buildContextMenuTemplate(window, params, details);
       if (template.length === 0 || window.isDestroyed()) {
         return;
       }
@@ -204,6 +212,22 @@ function attachExternalNavigationGuard(window: BrowserWindow) {
       event.preventDefault();
       void shell.openExternal(url);
     }
+  });
+}
+
+function registerClipboardIpc() {
+  ipcMain.handle("clipboard:write-text", async (_event, text: string) => {
+    clipboard.writeText(text);
+    return { ok: true } as const;
+  });
+
+  ipcMain.handle("clipboard:read-image-data-url", async () => {
+    const image = clipboard.readImage();
+    if (image.isEmpty()) {
+      return null;
+    }
+
+    return image.toDataURL();
   });
 }
 
@@ -255,6 +279,7 @@ app.whenReady().then(() => {
 
   registerFileIpc();
   registerExportIpc();
+  registerClipboardIpc();
   createWindow();
 
   app.on("activate", () => {

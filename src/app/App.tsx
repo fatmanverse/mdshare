@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
-import { EditorPane } from "../components/EditorPane";
+import { EditorPane, type EditorPaneHandle } from "../components/EditorPane";
+import { DocumentHealthDialog } from "../components/DocumentHealthDialog";
 import { PreviewPane } from "../components/PreviewPane";
 import { RecentFilesPanel } from "../components/RecentFilesPanel";
 import { StatusBar } from "../components/StatusBar";
 import { TocPanel } from "../components/TocPanel";
 import { Toolbar } from "../components/Toolbar";
+import { buildDocumentDiagnostics, getLocalImageSources, type DocumentDiagnostic } from "../lib/markdown/diagnostics";
+import { getExportPreset, type ExportPreset } from "../lib/markdown/export-preset";
 import { preparePreviewHtml } from "../lib/markdown/images";
+import { renderMermaidHtml } from "../lib/markdown/mermaid";
 import { renderMarkdown } from "../lib/markdown/parser";
+import type { RenderStyle } from "../lib/markdown/render-style";
 import { buildExportHtml } from "../lib/markdown/template";
 import { useDocumentStore } from "./store/document-store";
 
@@ -16,6 +21,10 @@ type ThemePreference = "light" | "dark" | "system";
 type AppSettings = {
   theme: ThemePreference;
   reopenLastFile: boolean;
+  renderStyle: RenderStyle;
+  exportPreset: ExportPreset;
+  showPreview: boolean;
+  autoSave: boolean;
 };
 
 type OpenedFile = {
@@ -32,6 +41,10 @@ const MARKDOWN_FILE_PATTERN = /\.(md|markdown)$/i;
 const defaultSettings: AppSettings = {
   theme: "system",
   reopenLastFile: false,
+  renderStyle: "default",
+  exportPreset: "default-doc",
+  showPreview: true,
+  autoSave: false,
 };
 const DEFAULT_MESSAGE = "准备就绪";
 
@@ -75,10 +88,13 @@ export function App() {
   const [isDragActive, setIsDragActive] = useState(false);
   const [activeTocId, setActiveTocId] = useState<string | null>(null);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [missingLocalImageSources, setMissingLocalImageSources] = useState<string[]>([]);
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">(() => getSystemThemePreference());
   const [isInitialized, setIsInitialized] = useState(false);
+  const [healthCheckDialogState, setHealthCheckDialogState] = useState<{ mode: "manual" | "export"; exportKind?: "html" | "pdf" } | null>(null);
   const dragDepthRef = useRef(0);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const editorRef = useRef<EditorPaneHandle | null>(null);
 
   const filePath = useDocumentStore((state) => state.filePath);
   const title = useDocumentStore((state) => state.title);
@@ -90,17 +106,29 @@ export function App() {
   const setContent = useDocumentStore((state) => state.setContent);
 
   const resolvedTheme = useMemo(() => resolveTheme(settings.theme, systemTheme), [settings.theme, systemTheme]);
+  const activeExportPreset = useMemo(() => getExportPreset(settings.exportPreset), [settings.exportPreset]);
   const rendered = useMemo(() => renderMarkdown(content), [content]);
   const previewHtml = useMemo(() => preparePreviewHtml(rendered.html, filePath), [filePath, rendered.html]);
-  const exportHtml = useMemo(
+  const buildPreparedExportHtml = useCallback(async () => {
+    const mermaidRenderedHtml = await renderMermaidHtml(previewHtml, resolvedTheme);
+
+    return buildExportHtml({
+      title,
+      html: mermaidRenderedHtml,
+      toc: rendered.toc,
+      theme: resolvedTheme,
+      exportPreset: settings.exportPreset,
+    });
+  }, [previewHtml, rendered.toc, resolvedTheme, settings.exportPreset, title]);
+  const diagnostics = useMemo(
     () =>
-      buildExportHtml({
-        title,
-        html: previewHtml,
+      buildDocumentDiagnostics({
+        markdown: content,
         toc: rendered.toc,
-        theme: resolvedTheme,
+        markdownFilePath: filePath,
+        missingImageSources: missingLocalImageSources,
       }),
-    [previewHtml, rendered.toc, resolvedTheme, title],
+    [content, filePath, missingLocalImageSources, rendered.toc],
   );
 
   const words = content.trim() ? content.trim().split(/\s+/).length : 0;
@@ -164,6 +192,50 @@ export function App() {
       }
     },
     [persistSettings],
+  );
+
+  const handleTogglePreview = useCallback(
+    async (enabled: boolean) => {
+      try {
+        await persistSettings({ showPreview: enabled });
+        if (!enabled) {
+          setActiveTocId(null);
+        }
+        setMessage(enabled ? "已打开实时预览" : "已关闭实时预览");
+      } catch (error) {
+        setMessage(`预览开关设置失败：${getErrorMessage(error)}`);
+      }
+    },
+    [persistSettings],
+  );
+
+  const handleToggleAutoSave = useCallback(
+    async (enabled: boolean) => {
+      try {
+        await persistSettings({ autoSave: enabled });
+        setMessage(enabled ? "已开启自动保存（仅对已保存文件生效）" : "已关闭自动保存");
+      } catch (error) {
+        setMessage(`自动保存设置失败：${getErrorMessage(error)}`);
+      }
+    },
+    [persistSettings],
+  );
+
+  const handleExportPresetChange = useCallback(
+    async (nextExportPreset: ExportPreset) => {
+      if (nextExportPreset === settings.exportPreset) {
+        return;
+      }
+
+      try {
+        const nextPreset = getExportPreset(nextExportPreset);
+        await persistSettings({ exportPreset: nextExportPreset, renderStyle: nextPreset.renderStyle });
+        setMessage(`导出预设已切换为 ${nextPreset.label}`);
+      } catch (error) {
+        setMessage(`导出预设设置失败：${getErrorMessage(error)}`);
+      }
+    },
+    [persistSettings, settings.exportPreset],
   );
 
   const handleNew = useCallback(() => {
@@ -231,6 +303,43 @@ export function App() {
     [confirmDiscardChanges, openFileByPath],
   );
 
+  const handleRemoveRecent = useCallback(
+    async (targetFilePath: string) => {
+      if (typeof window.electronApi.removeRecentFile !== "function") {
+        setMessage("当前版本缺少最近历史删除接口，请重启应用");
+        return;
+      }
+
+      try {
+        await window.electronApi.removeRecentFile(targetFilePath);
+        await refreshRecentFiles();
+        const removedName = targetFilePath.split(/[\/]/).pop() ?? targetFilePath;
+        setMessage(`已从最近历史移除 ${removedName}`);
+      } catch (error) {
+        setMessage(`移除最近历史失败：${getErrorMessage(error)}`);
+      }
+    },
+    [refreshRecentFiles],
+  );
+
+  const handleClearRecent = useCallback(
+    async () => {
+      if (typeof window.electronApi.clearRecentFiles !== "function") {
+        setMessage("当前版本缺少最近历史清空接口，请重启应用");
+        return;
+      }
+
+      try {
+        await window.electronApi.clearRecentFiles();
+        await refreshRecentFiles();
+        setMessage("已清空最近历史");
+      } catch (error) {
+        setMessage(`清空最近历史失败：${getErrorMessage(error)}`);
+      }
+    },
+    [refreshRecentFiles],
+  );
+
   const handleSave = useCallback(
     async (saveAs = false) => {
       const payload = {
@@ -262,15 +371,15 @@ export function App() {
     [content, filePath, refreshRecentFiles, setDocument, title],
   );
 
-  const handleExport = useCallback(
+  const runExport = useCallback(
     async (kind: "html" | "pdf") => {
-      const payload = {
-        title,
-        html: exportHtml,
-        markdownFilePath: filePath,
-      };
-
       try {
+        const payload = {
+          title,
+          html: await buildPreparedExportHtml(),
+          markdownFilePath: filePath,
+        };
+
         const result =
           kind === "html"
             ? await window.electronApi.exportHtml(payload)
@@ -284,7 +393,30 @@ export function App() {
         setMessage(`导出失败：${getErrorMessage(error)}`);
       }
     },
-    [exportHtml, filePath, title],
+    [buildPreparedExportHtml, filePath, title],
+  );
+
+  const openHealthCheckDialog = useCallback((mode: "manual" | "export", exportKind?: "html" | "pdf") => {
+    setHealthCheckDialogState({ mode, exportKind });
+  }, []);
+
+  const closeHealthCheckDialog = useCallback(() => {
+    setHealthCheckDialogState(null);
+  }, []);
+
+  const handleExport = useCallback(
+    async (kind: "html" | "pdf") => {
+      const blockingDiagnostics = diagnostics.filter((diagnostic) => diagnostic.severity === "error");
+      const warningDiagnostics = diagnostics.filter((diagnostic) => diagnostic.severity === "warning");
+
+      if (blockingDiagnostics.length > 0 || warningDiagnostics.length > 0) {
+        openHealthCheckDialog("export", kind);
+        return;
+      }
+
+      await runExport(kind);
+    },
+    [diagnostics, openHealthCheckDialog, runExport],
   );
 
   const handleDragEnter = useCallback((event: DragEvent<HTMLElement>) => {
@@ -352,6 +484,35 @@ export function App() {
   }, [rendered.html, rendered.toc, setDocument]);
 
   useEffect(() => {
+    let cancelled = false;
+    const localImageSources = Array.from(new Set(getLocalImageSources(content).map((image) => image.source)));
+
+    if (!filePath || localImageSources.length === 0) {
+      setMissingLocalImageSources([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void window.electronApi
+      .validateLocalImageSources({ markdownFilePath: filePath, sources: localImageSources })
+      .then((missingSources) => {
+        if (!cancelled) {
+          setMissingLocalImageSources(missingSources);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMissingLocalImageSources([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [content, filePath]);
+
+  useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const update = () => setSystemTheme(media.matches ? "dark" : "light");
 
@@ -384,6 +545,49 @@ export function App() {
 
     return () => window.clearTimeout(timer);
   }, [content, filePath, isInitialized, setDocument]);
+
+  useEffect(() => {
+    if (!isInitialized || !settings.autoSave || !filePath || !isDirty) {
+      return;
+    }
+
+    const snapshot = {
+      filePath,
+      content,
+      title,
+    };
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await window.electronApi.saveFile({
+          filePath: snapshot.filePath,
+          content: snapshot.content,
+          suggestedName: `${snapshot.title || "untitled"}.md`,
+        });
+        if (!result) {
+          return;
+        }
+
+        const latestDocument = useDocumentStore.getState();
+        if (latestDocument.filePath !== snapshot.filePath || latestDocument.content !== snapshot.content) {
+          return;
+        }
+
+        const savedAt = Date.now();
+        setDocument({
+          filePath: result.filePath,
+          title: result.title,
+          isDirty: false,
+          lastSavedAt: savedAt,
+          lastAutosavedAt: savedAt,
+        });
+      } catch (error) {
+        setMessage(`自动保存失败：${getErrorMessage(error)}`);
+      }
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [content, filePath, isDirty, isInitialized, setDocument, settings.autoSave, title]);
 
   useEffect(() => {
     let cancelled = false;
@@ -517,11 +721,15 @@ export function App() {
   const handleSelectTocItem = useCallback((id: string) => {
     const container = previewRef.current;
     if (!container) {
+      setActiveTocId(id);
+      editorRef.current?.scrollToHeading(id);
       return;
     }
 
     const heading = container.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
     if (!heading) {
+      setActiveTocId(id);
+      editorRef.current?.scrollToHeading(id);
       return;
     }
 
@@ -534,7 +742,47 @@ export function App() {
       behavior: "smooth",
     });
     setActiveTocId(id);
+    editorRef.current?.scrollToHeading(id);
   }, []);
+
+  const handlePreviewHeadingSelect = useCallback((id: string) => {
+    setActiveTocId(id);
+    editorRef.current?.scrollToHeading(id);
+  }, []);
+
+  const handlePreviewScrollSync = useCallback((ratio: number) => {
+    editorRef.current?.scrollToRatio(ratio);
+  }, []);
+
+  const focusDiagnostic = useCallback(
+    (diagnostic: DocumentDiagnostic) => {
+      if (diagnostic.headingId) {
+        handleSelectTocItem(diagnostic.headingId);
+        return;
+      }
+
+      if (diagnostic.line) {
+        editorRef.current?.scrollToLine(diagnostic.line);
+      }
+    },
+    [handleSelectTocItem],
+  );
+
+  const handleSelectDiagnostic = useCallback(
+    (diagnostic: DocumentDiagnostic) => {
+      closeHealthCheckDialog();
+
+      focusDiagnostic(diagnostic);
+    },
+    [closeHealthCheckDialog, focusDiagnostic],
+  );
+
+  const handlePreviewDiagnostic = useCallback(
+    (diagnostic: DocumentDiagnostic) => {
+      focusDiagnostic(diagnostic);
+    },
+    [focusDiagnostic],
+  );
 
   useEffect(() => {
     return window.electronApi.onMenuAction((action) => {
@@ -566,9 +814,12 @@ export function App() {
         case "settings:set-reopen-last-file":
           void handleToggleReopenLastFile(action.enabled);
           break;
+        case "settings:set-auto-save":
+          void handleToggleAutoSave(action.enabled);
+          break;
       }
     });
-  }, [handleExport, handleNew, handleOpen, handleOpenRecent, handleSave, handleThemePreferenceChange, handleToggleReopenLastFile]);
+  }, [handleExport, handleNew, handleOpen, handleOpenRecent, handleSave, handleThemePreferenceChange, handleToggleAutoSave, handleToggleReopenLastFile]);
 
   return (
     <div
@@ -582,6 +833,7 @@ export function App() {
         currentFilePath={filePath}
         recentFiles={recentFiles}
         reopenLastFile={settings.reopenLastFile}
+        autoSave={settings.autoSave}
         theme={resolvedTheme}
         themePreference={settings.theme}
         title={title}
@@ -592,19 +844,44 @@ export function App() {
         onSaveAs={() => void handleSave(true)}
         onExportHtml={() => void handleExport("html")}
         onExportPdf={() => void handleExport("pdf")}
+        onOpenHealthCheck={() => openHealthCheckDialog("manual")}
         onThemePreferenceChange={(nextTheme) => void handleThemePreferenceChange(nextTheme)}
         onToggleReopenLastFile={(enabled) => void handleToggleReopenLastFile(enabled)}
+        onToggleAutoSave={(enabled) => void handleToggleAutoSave(enabled)}
         onToggleTheme={() => void handleThemePreferenceChange(resolvedTheme === "light" ? "dark" : "light")}
+        showPreview={settings.showPreview}
+        onTogglePreview={() => void handleTogglePreview(!settings.showPreview)}
       />
 
       <main className="workspace">
-        <div className="workspace__content">
-          <EditorPane value={content} theme={resolvedTheme} onChange={setContent} />
-          <PreviewPane html={previewHtml} containerRef={previewRef} onActiveHeadingChange={setActiveTocId} onNotify={setMessage} />
+        <div className={`workspace__content${settings.showPreview ? "" : " workspace__content--single"}`}>
+          <EditorPane ref={editorRef} filePath={filePath} value={content} theme={resolvedTheme} toc={rendered.toc} onChange={setContent} onStatusMessage={setMessage} />
+          {settings.showPreview ? (
+            <PreviewPane
+              title={title}
+              html={previewHtml}
+              theme={resolvedTheme}
+              containerRef={previewRef}
+              renderStyle={activeExportPreset.renderStyle}
+              exportPreset={settings.exportPreset}
+              onExportPresetChange={handleExportPresetChange}
+              onTogglePreview={() => void handleTogglePreview(false)}
+              onActiveHeadingChange={setActiveTocId}
+              onNotify={setMessage}
+              onScrollSync={handlePreviewScrollSync}
+              onHeadingClick={handlePreviewHeadingSelect}
+            />
+          ) : null}
         </div>
-        <div className="sidebar">
+        <div className="sidebar sidebar--two-panels">
           <TocPanel toc={rendered.toc} activeId={activeTocId} onSelect={handleSelectTocItem} />
-          <RecentFilesPanel currentFilePath={filePath} files={recentFiles} onOpenFile={handleOpenRecent} />
+          <RecentFilesPanel
+            currentFilePath={filePath}
+            files={recentFiles}
+            onOpenFile={handleOpenRecent}
+            onRemoveFile={handleRemoveRecent}
+            onClearFiles={handleClearRecent}
+          />
         </div>
       </main>
 
@@ -616,6 +893,29 @@ export function App() {
         lines={lines}
       />
 
+      {healthCheckDialogState ? (
+        <DocumentHealthDialog
+          diagnostics={diagnostics}
+          mode={healthCheckDialogState.mode}
+          exportKind={healthCheckDialogState.exportKind}
+          onClose={() => {
+            if (healthCheckDialogState.mode === "export") {
+              setMessage("已取消导出，请先处理文档中的风险项");
+            }
+            closeHealthCheckDialog();
+          }}
+          onSelectDiagnostic={handleSelectDiagnostic}
+          onPreviewDiagnostic={handlePreviewDiagnostic}
+          onConfirmExport={
+            healthCheckDialogState.mode === "export" && healthCheckDialogState.exportKind
+              ? () => {
+                  closeHealthCheckDialog();
+                  void runExport(healthCheckDialogState.exportKind!);
+                }
+              : undefined
+          }
+        />
+      ) : null}
       {message !== DEFAULT_MESSAGE ? <div className="toast">{message}</div> : null}
       {isDragActive ? <div className="drop-overlay">拖拽 Markdown 文件到这里打开</div> : null}
     </div>

@@ -14,6 +14,12 @@ describe("preview image path handling", () => {
     expect(resolved).toBe("https://example.com/demo.png");
   });
 
+  it("keeps data uri image sources unchanged", () => {
+    const resolved = resolveImageSourceForPreview("data:image/png;base64,abc", "/Users/demo/docs/readme.md");
+
+    expect(resolved).toBe("data:image/png;base64,abc");
+  });
+
   it("rewrites image tags inside preview html", () => {
     const html = '<p><img src="./demo.png" alt="demo"></p>';
     const previewHtml = preparePreviewHtml(html, "/Users/demo/docs/readme.md");

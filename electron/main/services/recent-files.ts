@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 export type ThemePreference = "light" | "dark" | "system";
+export type RenderStylePreference = "default" | "compact" | "article";
+export type ExportPresetPreference = "default-doc" | "sop" | "share-article";
 
 export type DraftPayload = {
   content: string;
@@ -12,6 +14,10 @@ export type DraftPayload = {
 export type AppSettings = {
   theme: ThemePreference;
   reopenLastFile: boolean;
+  renderStyle: RenderStylePreference;
+  exportPreset: ExportPresetPreference;
+  showPreview: boolean;
+  autoSave: boolean;
 };
 
 type LocalStore = {
@@ -26,12 +32,34 @@ const storePath = path.join(app.getPath("userData"), "mdshare-store.json");
 const defaultSettings: AppSettings = {
   theme: "system",
   reopenLastFile: false,
+  renderStyle: "default",
+  exportPreset: "default-doc",
+  showPreview: true,
+  autoSave: false,
 };
 
 function normalizeSettings(value: Partial<AppSettings> | null | undefined): AppSettings {
+  const renderStyle =
+    value?.renderStyle === "default" || value?.renderStyle === "compact" || value?.renderStyle === "article"
+      ? value.renderStyle
+      : defaultSettings.renderStyle;
+
+  const exportPreset =
+    value?.exportPreset === "default-doc" || value?.exportPreset === "sop" || value?.exportPreset === "share-article"
+      ? value.exportPreset
+      : renderStyle === "compact"
+        ? "sop"
+        : renderStyle === "article"
+          ? "share-article"
+          : defaultSettings.exportPreset;
+
   return {
     theme: value?.theme === "light" || value?.theme === "dark" || value?.theme === "system" ? value.theme : defaultSettings.theme,
     reopenLastFile: typeof value?.reopenLastFile === "boolean" ? value.reopenLastFile : defaultSettings.reopenLastFile,
+    renderStyle: exportPreset === "sop" ? "compact" : exportPreset === "share-article" ? "article" : "default",
+    exportPreset,
+    showPreview: typeof value?.showPreview === "boolean" ? value.showPreview : defaultSettings.showPreview,
+    autoSave: typeof value?.autoSave === "boolean" ? value.autoSave : defaultSettings.autoSave,
   };
 }
 
@@ -70,6 +98,18 @@ export async function addRecentFile(filePath: string) {
 export async function getRecentFiles() {
   const store = await readStore();
   return store.recentFiles;
+}
+
+export async function removeRecentFile(filePath: string) {
+  const store = await readStore();
+  const recentFiles = store.recentFiles.filter((item) => item !== filePath);
+  const lastOpenedFilePath = store.lastOpenedFilePath === filePath ? null : store.lastOpenedFilePath;
+  await writeStore({ ...store, recentFiles, lastOpenedFilePath });
+}
+
+export async function clearRecentFiles() {
+  const store = await readStore();
+  await writeStore({ ...store, recentFiles: [], lastOpenedFilePath: null });
 }
 
 export async function saveRecoveryDraft(payload: DraftPayload) {

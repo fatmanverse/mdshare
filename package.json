@@ -1,6 +1,6 @@
 {
   "name": "mdshare",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Local-first Markdown publisher for polished HTML and PDF export.",
   "main": "dist-electron/electron/main/index.js",
@@ -33,6 +33,7 @@
     "codemirror": "^6.0.1",
     "highlight.js": "^11.10.0",
     "markdown-it": "^14.1.0",
+    "mermaid": "^11.13.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^4.5.5"

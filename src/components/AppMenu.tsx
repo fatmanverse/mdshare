@@ -6,9 +6,11 @@ type AppMenuProps = {
   currentFilePath: string | null;
   recentFiles: string[];
   reopenLastFile: boolean;
+  autoSave: boolean;
   themePreference: ThemePreference;
   onOpenRecentFile: (filePath: string) => void;
   onToggleReopenLastFile: (enabled: boolean) => void;
+  onToggleAutoSave: (enabled: boolean) => void;
   onThemePreferenceChange: (theme: ThemePreference) => void;
 };
 
@@ -118,12 +120,29 @@ export function AppMenu(props: AppMenuProps) {
           </section>
 
           <section className="toolbar-menu__section">
+            <h3 className="toolbar-menu__heading">保存</h3>
+            <button
+              type="button"
+              className={`toolbar-menu__toggle${props.autoSave ? " toolbar-menu__toggle--active" : ""}`}
+              onClick={() => props.onToggleAutoSave(!props.autoSave)}
+            >
+              <span className="toolbar-menu__toggle-text">
+                <strong>自动保存已保存文件</strong>
+                <small>编辑后自动写回当前 Markdown 文件，未保存的新文档不会自动落盘</small>
+              </span>
+              <span className="toolbar-menu__toggle-pill" aria-hidden="true">
+                <span className="toolbar-menu__toggle-thumb" />
+              </span>
+            </button>
+          </section>
+
+          <section className="toolbar-menu__section">
             <h3 className="toolbar-menu__heading">最近打开</h3>
             {props.recentFiles.length === 0 ? (
               <p className="toolbar-menu__empty">还没有可直接打开的历史文件</p>
             ) : (
               <ul className="toolbar-menu__recent-list">
-                {props.recentFiles.slice(0, 6).map((filePath) => {
+                {props.recentFiles.map((filePath) => {
                   const active = props.currentFilePath === filePath;
 
                   return (
@@ -131,13 +150,18 @@ export function AppMenu(props: AppMenuProps) {
                       <button
                         type="button"
                         className={`toolbar-menu__recent-button${active ? " toolbar-menu__recent-button--active" : ""}`}
+                        title={filePath}
                         onClick={() => {
                           props.onOpenRecentFile(filePath);
                           setIsOpen(false);
                         }}
                       >
-                        <span className="toolbar-menu__recent-name">{getFileName(filePath)}</span>
-                        <span className="toolbar-menu__recent-path">{filePath}</span>
+                        <span className="toolbar-menu__recent-name" title={getFileName(filePath)}>
+                          {getFileName(filePath)}
+                        </span>
+                        <span className="toolbar-menu__recent-path" title={filePath}>
+                          {filePath}
+                        </span>
                       </button>
                     </li>
                   );
